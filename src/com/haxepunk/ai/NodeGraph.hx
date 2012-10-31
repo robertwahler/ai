@@ -17,32 +17,30 @@ enum PathOptimize
 typedef PathOptions = {
 	/** The heuristic to use for path finding (default: Heuristic.manhattan) */
 	@:optional public var heuristic:HeuristicFunction;
-	/** Allows diagonal movement in path generation (default: false) */
-	@:optional public var walkDiagonal:Bool;
 	/** Generates an optimized path list, removes identical slopes (default:true) */
 	@:optional public var optimize:PathOptimize;
 };
 
 /**
- * An A* implementation for Grid masks
+ * A node graph class for A* pathfinding
  */
-class GridPath
+class NodeGraph
 {
-
-	public static inline var HORIZONTAL_COST:Int = 10;
-	public static inline var VERTICAL_COST:Int = 14;
 
 	/**
 	 * Creates a GridPath class
 	 * @param grid the Grid mask to use for path info
 	 * @param options a set of options that determine how paths are generated
 	 */
-	public function new(grid:Grid, ?options:PathOptions)
+	public function new()
 	{
 		nodes = new Array<PathNode>();
 		openList = new PriorityQueue<PathNode>();
 		closedList = new Array<PathNode>();
+	}
 
+	public function fromGrid(grid:Grid, allowDiagonal:Bool=false, ?options:PathOptions)
+	{
 		// build node list
 		width = Std.int(grid.width / grid.tileWidth);
 		height = Std.int(grid.height / grid.tileHeight);
@@ -51,22 +49,20 @@ class GridPath
 		{
 			x = i % width;
 			y = Std.int(i / width);
-			nodes[i] = new PathNode(x, y);
-			nodes[i].walkable = !grid.getTile(x, y);
+			if (!grid.getTile(x, y)) {
+				nodes.push(new PathNode(x, y));
+				// add neighbors
+			}
 		}
 
 		// set defaults
 		heuristic = Heuristic.manhattan;
 		optimize = PathOptimize.SLOPE_MATCH;
-		walkDiagonal = false;
 
 		if (options != null)
 		{
 			if (Reflect.hasField(options, "heuristic"))
 				heuristic = options.heuristic;
-
-			if (Reflect.hasField(options, "walkDiagonal"))
-				walkDiagonal = options.walkDiagonal;
 
 			if (Reflect.hasField(options, "optimize"))
 				optimize = options.optimize;
@@ -75,20 +71,18 @@ class GridPath
 
 	/**
 	 * Finds the shortest path between two points, if possible
-	 * @param sx the start x coordinate
-	 * @param sy the start y coordinate
-	 * @param dx the destination x coordinate
-	 * @param dy the destination y coordinate
+	 * @param sx the world start x coordinate
+	 * @param sy the world start y coordinate
+	 * @param dx the world destination x coordinate
+	 * @param dy the world destination y coordinate
 	 * @return a list of nodes from the start to finish
 	 */
-	public function findPath(sx:Int, sy:Int, dx:Int, dy:Int):Array<PathNode>
+	public function search(sx:Float, sy:Float, dx:Float, dy:Float):Array<PathNode>
 	{
-		destX = dx; destY = dy;
-
 		reset();
 
 		// push starting node to the open list
-		var start = getNode(sx, sy);
+		var start = getClosestNode(sx, sy);
 		start.parent = null;
 		openList.enqueue(start, 0);
 
@@ -106,52 +100,32 @@ class GridPath
 			closedList.push(node);
 
 			// check all the neighbors
-			updateNeighbor(node, 1, 0);
-			updateNeighbor(node, 0,-1);
-			updateNeighbor(node,-1, 0);
-			updateNeighbor(node, 0, 1);
-
-			if (walkDiagonal)
+			for (neighbor in node.neighbors)
 			{
-				updateNeighbor(node, 1, 1);
-				updateNeighbor(node, 1,-1);
-				updateNeighbor(node,-1,-1);
-				updateNeighbor(node,-1, 1);
+				if (Lambda.has(closedList, neighbor))
+				{
+					continue;
+				}
+				else
+				{
+					var cost = HXP.distance(node.x, node.y, neighbor.x, neighbor.y);
+					var g = node.g + cost;
+					if (g < neighbor.g || neighbor.parent == null)
+					{
+						neighbor.g = g;
+						neighbor.h = heuristic(neighbor.x, neighbor.y, dx, dy) * HORIZONTAL_COST;
+						neighbor.parent = node;
+
+						// remove the node if it exists on the open list
+						openList.remove(neighbor);
+						// enqueue the node with the new priority
+						openList.enqueue(neighbor, Std.int(neighbor.g + neighbor.h));
+					}
+				}
 			}
 		}
 
 		return null;
-	}
-
-	/**
-	 * Updates a neighboring node info
-	 * @param parent the neighbor node's parent
-	 * @param x the neighbor x distance from the parent
-	 * @param y the neighbor y distance from the parent
-	 */
-	private inline function updateNeighbor(parent:PathNode, x:Int, y:Int)
-	{
-		var node = getNode(parent.x + x, parent.y + y);
-		if (node == null || !node.walkable || Lambda.has(closedList, node))
-		{
-			return;
-		}
-		else
-		{
-			var horizontal = (x == 0 || y == 0);
-			var g = parent.g + (horizontal ? HORIZONTAL_COST : VERTICAL_COST);
-			if (g < node.g || node.parent == null)
-			{
-				node.g = g;
-				node.h = Std.int(heuristic(parent.x, parent.y, destX, destY) * HORIZONTAL_COST);
-				node.parent = parent;
-
-				// remove the node if it exists on the open list
-				openList.remove(node);
-				// enqueue the node with the new priority
-				openList.enqueue(node, node.g + node.h);
-			}
-		}
 	}
 
 	/**
@@ -232,23 +206,26 @@ class GridPath
 	}
 
 	/**
-	 * Retrieves a PathNode at a specific index
+	 * Retrieves the closest PathNode to a world point
 	 */
-	private inline function getNode(x:Int, y:Int):PathNode
+	private inline function getClosestNode(x:Float, y:Float):PathNode
 	{
-		var index = y * width + x;
-		if (x < 0 || y < 0 || index >= nodes.length)
-			return null;
-		else
-			return nodes[index];
+		var closestDist:Float = 999999999;
+		var closest:PathNode = null;
+		for (node in nodes)
+		{
+			var dist = HXP.distance(node.x, node.y, x, y);
+			if (dist < closestDist)
+			{
+				closest = node;
+				closestDist = dist;
+			}
+		}
+		return closest;
 	}
 
 	private var heuristic:HeuristicFunction;
-	private var walkDiagonal:Bool;
 	private var optimize:PathOptimize;
-
-	private var destX:Int;
-	private var destY:Int;
 
 	private var width:Int;
 	private var height:Int;

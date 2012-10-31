@@ -1,6 +1,6 @@
 import com.haxepunk.World;
 import com.haxepunk.masks.Grid;
-import com.haxepunk.ai.GridPath;
+import com.haxepunk.ai.NodeGraph;
 import com.haxepunk.ai.PathNode;
 import com.haxepunk.utils.Draw;
 import com.haxepunk.utils.Input;
@@ -30,7 +30,7 @@ class Test extends World
 	public function new()
 	{
 		super();
-
+		graph = new NodeGraph();
 	}
 
 	public override function begin()
@@ -46,7 +46,7 @@ class Test extends World
 		}
 
 		addMask(grid, "solid");
-		astar = new GridPath(grid);
+		graph.fromGrid(grid, false);
 	}
 
 	public override function update()
@@ -61,7 +61,7 @@ class Test extends World
 			}
 			else
 			{
-				path = astar.findPath(Std.int(start.x), Std.int(start.y), Std.int(x), Std.int(y));
+				path = graph.search(Std.int(start.x), Std.int(start.y), Std.int(x), Std.int(y));
 				start = null;
 			}
 		}
@@ -83,7 +83,7 @@ class Test extends World
 
 		if (path != null)
 		{
-			var last = null;
+			var last:PathNode = null;
 			for (node in path)
 			{
 				var x = Std.int(node.x * grid.tileWidth + grid.tileWidth / 2),
@@ -106,6 +106,6 @@ class Test extends World
 	private var start:Point;
 
 	private var grid:Grid;
-	private var astar:GridPath;
+	private var graph:NodeGraph;
 	private var path:Array<PathNode>;
 }
